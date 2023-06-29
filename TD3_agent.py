@@ -2,18 +2,14 @@ import numpy as np
 import torch
 import torch.optim as optim
 import torch.nn as nn
-from torch.utils.data import TensorDataset
 import gym
 from tqdm import tqdm
 
 from model import Actor, Critic
 from noise_generator import GaussianNoise
 from dataset import OfflineDataset
-# from replay_buffer import ReplayMemory  
 import os
-from collections import namedtuple
 
-Transition = namedtuple('Transition', ['obs', 'action', 'reward', 'next_obs', 'terminated'])
 
 class PretrainedTD3():
     def __init__(self, obs_space, action_space, args, device):
@@ -23,6 +19,7 @@ class PretrainedTD3():
         self.dataset_size = args.dataset_size
         self.load_path = args.load_path
         self.device = device
+        self.eval_episodes = args.eval_episodes
 
         self.actor = Actor(self.obs_dim[0], self.action_dim[0]).to(device)
         self.actor.load_state_dict(torch.load(args.load_path))
@@ -36,7 +33,7 @@ class PretrainedTD3():
             return OfflineDataset(self.transition_path)
             
 
-        print(f'Writing new data... (read_transition is set to false or the transition_path does not exist )')
+        print(f'Writing new data... (write_transition is set to true or the transition_path does not exist )')
         seed = 0
         obs = env.reset(seed=seed)
         obs_records = []
@@ -77,6 +74,26 @@ class PretrainedTD3():
         action = self.actor(obs).cpu().detach().numpy()
         return action
 
+    def evaluate(self):
+        env = gym.make(self.env_name)
+
+        avg_return = 0.
+        for _ in tqdm(range(self.eval_episodes), desc='evaluating pretrained model'):
+            obs = env.reset()
+            total_reward = 0
+            while True:
+                action = self.select_action(obs)
+                obs, reward, terminated, _ = env.step(action)
+                avg_return += reward
+                total_reward += reward
+
+                if terminated:
+                    break
+
+        avg_return /= self.eval_episodes
+
+        return avg_return
+
 
 class TD3Agent:
     def __init__(self, obs_space, action_space, args, device):
@@ -114,7 +131,6 @@ class TD3Agent:
         self.device = device
 
         self.steps = 0 # for actor and target critic update
-        self.eval_freq = args.eval_freq
         self.gamma = args.gamma
         self.delay = args.delay
         self.tau = args.tau
@@ -177,16 +193,16 @@ class TD3Agent:
 
         # update critic1
         q_pred1 = self.critic1(obs, action)
-        critic_loss = self.mse_loss(q_pred1, q_target.detach())
+        critic1_loss = self.mse_loss(q_pred1, q_target.detach())
         self.critic1_optim.zero_grad()
-        critic_loss.backward()
+        critic1_loss.backward()
         self.critic1_optim.step()
 
         # update critic2
         q_pred2 = self.critic2(obs, action)
-        critic_loss = self.mse_loss(q_pred2, q_target.detach())
+        critic2_loss = self.mse_loss(q_pred2, q_target.detach())
         self.critic2_optim.zero_grad()
-        critic_loss.backward()
+        critic2_loss.backward()
         self.critic2_optim.step()
 
 
@@ -194,9 +210,9 @@ class TD3Agent:
         if self.steps % self.delay == 0:
 
             # update actor
-            grad = -self.critic1(obs, self.actor(obs)).mean() # negative sign for gradient ascend
+            actor_loss = -self.critic1(obs, self.actor(obs)).mean() # negative sign for gradient ascend
             self.actor_optim.zero_grad()
-            grad.backward()
+            actor_loss.backward()
             self.actor_optim.step()
 
 
@@ -209,6 +225,8 @@ class TD3Agent:
 
             for source_param, target_param in zip(self.actor.parameters(), self.target_actor.parameters()):
                 target_param.data.copy_(self.tau * source_param.data + (1 - self.tau) * target_param.data)
+
+        return actor_loss.item(), critic1_loss.item(), critic2_loss.item()
 
 
         
