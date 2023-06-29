@@ -21,7 +21,10 @@ if __name__ == '__main__':
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--trials', type=int, default=10)
     parser.add_argument('--dataset_size', type=int, default=1000000)
-    parser.add_argument('--episode', type=int, default=1000)
+    parser.add_argument('--epoch', type=int, default=1000)
+    parser.add_argument('--batch_cloning', action='store_false')
+    parser.add_argument('--alpha', type=float, default=2.5)
+    parser.add_argument('--eps', type=float, default=1e-3)
 
     
     parser.add_argument('--load_path', type=str, default='./pretrain_model/expert.pth')
@@ -41,19 +44,19 @@ if __name__ == '__main__':
     pretrained_agent = PretrainedTD3(env.observation_space, env.action_space, args, device) 
     with torch.no_grad():
         dataset = pretrained_agent.generate_dataset(env)
-        dataset = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
+        mean, std = dataset.normalize_states(eps=args.eps)
+        dataset = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
 
         avg_return = pretrained_agent.evaluate()
         print(f'The model {args.load_path} has an avg_return of {avg_return} (sample from {args.eval_episodes} episodes)')
 
     TD3_agent = TD3Agent(env.observation_space, env.action_space, args, device)
-    for i in range(args.episode):
-        total_actor_loss, total_critic1_loss, total_critic2_loss = 0, 0, 0
-        for experience in tqdm(dataset, desc=f'episode {i}'):
+    for i in range(args.epoch):
+        total_critic1_loss, total_critic2_loss = 0, 0
+        for experience in tqdm(dataset, desc=f'epoch {i}'):
             losses = TD3_agent.learn(experience)
-            total_actor_loss += losses[0]
-            total_critic1_loss += losses[1]
-            total_critic2_loss += losses[2]
+            total_critic1_loss += losses[0]
+            total_critic2_loss += losses[1]
 
-        avg_return = TD3_agent.evaluate()
-        print(f'episode: {i}, avg_return: {avg_return}, total_actor_loss: {total_actor_loss}, total_critic1_loss: {total_critic1_loss}, total_critic2_loss: {total_critic2_loss}')
+        avg_return = TD3_agent.evaluate(mean, std)
+        print(f'epoch: {i}, avg_return: {avg_return}, total_critic1_loss: {total_critic1_loss}, total_critic2_loss: {total_critic2_loss}')

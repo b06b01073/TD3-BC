@@ -16,10 +16,15 @@ class OfflineDataset(Dataset):
             self.terminated = np.load(os.path.join(transition_path, 'terminated.npy'))
 
 
-        self.experience = [[torch.tensor(x, dtype=torch.float) for x in transition] for transition in tqdm(zip(self.obs, self.action, self.reward, self.next_obs, self.terminated), desc='building dataset')]
+    def normalize_states(self, eps):
+        mean = np.mean(self.obs, axis=0)
+        std = np.std(self.obs, axis=0) + eps
+        self.obs = (self.obs - mean) / std
+        self.next_obs = (self.next_obs - mean) / std
+        return mean, std
 
     def __len__(self):
-        return len(self.experience)
+        return len(self.obs)
     
     def __getitem__(self, idx):
-        return self.experience[idx]
+        return torch.tensor(self.obs[idx], dtype=torch.float), torch.tensor(self.action[idx], dtype=torch.float), torch.tensor(self.reward[idx], dtype=torch.float), torch.tensor(self.next_obs[idx], dtype=torch.float), torch.tensor(self.terminated[idx], dtype=torch.float)

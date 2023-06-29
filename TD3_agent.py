@@ -126,7 +126,6 @@ class TD3Agent:
         self.policy_smoother = GaussianNoise(size=self.action_dim, mu=args.smoother_mu, sigma=args.smoother_sigma, clip=args.smoother_clip)
 
 
-        # self.memory = ReplayMemory(capacity=args.max_steps) # the entire history of the agent
         self.batch_size = args.batch_size
         self.device = device
 
@@ -136,6 +135,9 @@ class TD3Agent:
         self.tau = args.tau
         self.env_name = args.env_name
         self.eval_episodes = args.eval_episodes
+        self.batch_cloning = args.batch_cloning
+        self.eps = args.eps
+        self.alpha = args.alpha
 
 
         self.save_dir = args.save_dir
@@ -153,22 +155,25 @@ class TD3Agent:
             target_param.data.copy_(source_param.data)
 
 
-    def evaluate(self):
+    def evaluate(self, mean, std):
         env = gym.make(self.env_name)
 
         avg_return = 0.
+        seed = 100
         for i in range(self.eval_episodes):
-            obs = env.reset()
+            obs = env.reset(seed=seed)
             total_reward = 0
             while True:
+                obs = (obs - mean) / std
                 action = self.select_action(obs)
                 obs, reward, terminated, _ = env.step(action)
                 avg_return += reward
                 total_reward += reward
 
                 if terminated:
+                    seed += 1
                     break
-            print(f'total reward of  eval episode {i}: {total_reward}')
+            print(f'total reward of eval episode {i}: {total_reward}')
 
         avg_return /= self.eval_episodes
 
@@ -205,12 +210,21 @@ class TD3Agent:
         critic2_loss.backward()
         self.critic2_optim.step()
 
-
+        self.steps += 1
         # update actor and target network
         if self.steps % self.delay == 0:
 
+            if self.batch_cloning:
+                q_coef = self.alpha / (torch.mean(torch.abs(self.critic1(obs, self.actor(obs)))))
+                q_coef = q_coef.detach()
+
+                bc_loss = (self.actor(obs) - action) ** 2
+
+            if self.batch_cloning:
+                actor_loss = -(q_coef * self.critic1(obs, self.actor(obs)) - bc_loss).mean()
+            else:
+                actor_loss = -self.critic1(obs, self.actor(obs)).mean() # negative sign for gradient ascend
             # update actor
-            actor_loss = -self.critic1(obs, self.actor(obs)).mean() # negative sign for gradient ascend
             self.actor_optim.zero_grad()
             actor_loss.backward()
             self.actor_optim.step()
@@ -226,7 +240,7 @@ class TD3Agent:
             for source_param, target_param in zip(self.actor.parameters(), self.target_actor.parameters()):
                 target_param.data.copy_(self.tau * source_param.data + (1 - self.tau) * target_param.data)
 
-        return actor_loss.item(), critic1_loss.item(), critic2_loss.item()
+        return critic1_loss.item(), critic2_loss.item()
 
 
         
