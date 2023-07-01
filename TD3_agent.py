@@ -7,33 +7,33 @@ from tqdm import tqdm
 
 from model import Actor, Critic
 from noise_generator import GaussianNoise
-from dataset import OfflineDataset
+from replay_buffer import OfflineBuffer
 import os
 
 
 class PretrainedTD3():
-    def __init__(self, obs_space, action_space, args, device):
+    def __init__(self, obs_space, action_space, args, device, load_path):
         self.obs_dim = obs_space.shape
         self.action_dim = action_space.shape
         self.env_name = args.env_name
         self.dataset_size = args.dataset_size
-        self.load_path = args.load_path
+        self.load_path = load_path
         self.device = device
         self.eval_episodes = args.eval_episodes
 
         self.actor = Actor(self.obs_dim[0], self.action_dim[0]).to(device)
-        self.actor.load_state_dict(torch.load(args.load_path))
+        self.actor.load_state_dict(torch.load(self.load_path))
 
         self.write_transitions = args.write_transitions
-        self.transition_path = args.transition_path
+        self.data_path = os.path.join(args.transition_path, args.env_name)
 
     def generate_dataset(self, env):
-        if not self.write_transitions and os.path.exists(self.transition_path):
-            print(f'Reading existing data from {self.transition_path}')
-            return OfflineDataset(self.transition_path)
+        if not self.write_transitions and os.path.exists(self.data_path):
+            print(f'Reading existing data from {self.data_path}')
+            return OfflineBuffer(self.data_path)
             
 
-        print(f'Writing new data... (write_transition is set to true or the transition_path does not exist )')
+        print(f'Writing new data... (write_transition is set to true or the data_path does not exist )')
         seed = 0
         obs = env.reset(seed=seed)
         obs_records = []
@@ -50,7 +50,7 @@ class PretrainedTD3():
             action_records.append(action)
             next_obs_records.append(next_obs)
             reward_records.append(reward)
-            terminated_records.append(terminated)
+            terminated_records.append(int(terminated))
             
             obs = next_obs
 
@@ -58,16 +58,16 @@ class PretrainedTD3():
                 seed += 1
                 obs = env.reset(seed=seed)
 
-        if not os.path.exists(self.transition_path):
-            os.mkdir(self.transition_path)
+        if not os.path.exists(self.data_path):
+            os.makedirs(self.data_path)
         
-        np.save(os.path.join(self.transition_path, 'obs'), np.array(obs_records))
-        np.save(os.path.join(self.transition_path, 'action'), np.array(action_records))
-        np.save(os.path.join(self.transition_path, 'next_obs'), np.array(next_obs_records))
-        np.save(os.path.join(self.transition_path, 'reward'), np.array(reward_records))
-        np.save(os.path.join(self.transition_path, 'terminated'), np.array(terminated_records))
+        np.save(os.path.join(self.data_path, 'obs'), np.array(obs_records))
+        np.save(os.path.join(self.data_path, 'action'), np.array(action_records))
+        np.save(os.path.join(self.data_path, 'next_obs'), np.array(next_obs_records))
+        np.save(os.path.join(self.data_path, 'reward'), np.array(reward_records))
+        np.save(os.path.join(self.data_path, 'terminated'), np.array(terminated_records))
 
-        return OfflineDataset(self.transition_path)
+        return OfflineBuffer(self.data_path)
 
     def select_action(self, obs):
         obs = torch.from_numpy(obs).float().to(self.device)
@@ -155,7 +155,7 @@ class TD3Agent:
             target_param.data.copy_(source_param.data)
 
 
-    def evaluate(self, mean, std):
+    def evaluate(self, mean, std, iters):
         env = gym.make(self.env_name)
 
         avg_return = 0.
@@ -176,16 +176,16 @@ class TD3Agent:
             print(f'total reward of eval episode {i}: {total_reward}')
 
         avg_return /= self.eval_episodes
+        print(f'avg return: {avg_return} (steps {iters+1})')
 
         return avg_return
 
 
-    def learn(self, experience):
-        experience = [x.to(self.device) for x in experience]
-        obs, action, reward, next_obs, terminated = experience
+    def learn(self, transitions):
+        obs, actions, rewards, next_obs, terminated = transitions
 
         # unsqueeze to prevent incorrect broadcasting for mujoco env
-        reward = reward.unsqueeze(dim=1)
+        rewards = rewards.unsqueeze(dim=1)
         terminated = terminated.unsqueeze(dim=1)
         
         # build q target
@@ -194,17 +194,17 @@ class TD3Agent:
             next_action += torch.from_numpy(self.policy_smoother.sample()).float().to(self.device)
             next_action = torch.clamp(next_action, min=self.action_low_tensor, max=self.action_high_tensor)
 
-            q_target = reward + self.gamma * (1 - terminated) * torch.min(self.target_critic1(next_obs, next_action), self.target_critic2(next_obs, next_action))
+            q_target = rewards + self.gamma * (1 - terminated) * torch.min(self.target_critic1(next_obs, next_action), self.target_critic2(next_obs, next_action))
 
         # update critic1
-        q_pred1 = self.critic1(obs, action)
+        q_pred1 = self.critic1(obs, actions)
         critic1_loss = self.mse_loss(q_pred1, q_target.detach())
         self.critic1_optim.zero_grad()
         critic1_loss.backward()
         self.critic1_optim.step()
 
         # update critic2
-        q_pred2 = self.critic2(obs, action)
+        q_pred2 = self.critic2(obs, actions)
         critic2_loss = self.mse_loss(q_pred2, q_target.detach())
         self.critic2_optim.zero_grad()
         critic2_loss.backward()
@@ -218,7 +218,7 @@ class TD3Agent:
                 q_coef = self.alpha / (torch.mean(torch.abs(self.critic1(obs, self.actor(obs)))))
                 q_coef = q_coef.detach()
 
-                bc_loss = (self.actor(obs) - action) ** 2
+                bc_loss = (self.actor(obs) - actions) ** 2
 
             if self.batch_cloning:
                 actor_loss = -(q_coef * self.critic1(obs, self.actor(obs)) - bc_loss).mean()

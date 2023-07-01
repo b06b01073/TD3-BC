@@ -6,15 +6,14 @@ class Critic(nn.Module):
     def __init__(self, obs_dim, action_dim, hidden_dim1=400, hidden_dim2=300):
         super(Critic, self).__init__()
 
-        self.fc1 = nn.Linear(obs_dim, hidden_dim1)
-        self.fc2 = nn.Linear(action_dim + hidden_dim1, hidden_dim2)
+        self.fc1 = nn.Linear(obs_dim + action_dim, hidden_dim1)
+        self.fc2 = nn.Linear(hidden_dim1, hidden_dim2)
         self.fc3 = nn.Linear(hidden_dim2, 1)
         self.relu = nn.ReLU()
 
     def forward(self, obs, action):
-        x = self.relu(self.fc1(obs))
-        x = torch.cat((x, action), dim=1) # dim=0 is the batch dimension
-
+        x = torch.cat((obs, action), dim=1) # dim=0 is the batch dimension
+        x = self.relu(self.fc1(x))
         x = self.relu(self.fc2(x))
         x = self.fc3(x)
 
