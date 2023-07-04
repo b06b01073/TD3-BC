@@ -47,8 +47,8 @@ if __name__ == '__main__':
     load_path = os.path.join(args.load_dir, f'{args.env_name}.pth')
     pretrained_agent = PretrainedTD3(env.observation_space, env.action_space, args, device, load_path) 
     with torch.no_grad():
-        dataset = pretrained_agent.generate_dataset(env)
-        mean, std = dataset.normalize_states(eps=args.eps)
+        replay_buffer = pretrained_agent.generate_dataset(env)
+        mean, std = replay_buffer.normalize_states(eps=args.eps)
 
         avg_return = pretrained_agent.evaluate()
         print(f'The model {load_path} has an avg_return of {avg_return} (sample from {args.eval_episodes} episodes)')
@@ -56,7 +56,7 @@ if __name__ == '__main__':
     # TD3-BC
     TD3_agent = TD3Agent(env.observation_space, env.action_space, args, device)
     for i in range(args.max_step):
-        transitions = dataset.sample(args.batch_size, device) # always assume the size of dataset is larget than batch_size
+        transitions = replay_buffer.sample(args.batch_size, device) # always assume the size of dataset is larget than batch_size
         losses = TD3_agent.learn(transitions)
         if (i + 1) % args.eval_freq == 0:
             avg_return = TD3_agent.evaluate(mean, std, i)        

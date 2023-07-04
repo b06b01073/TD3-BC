@@ -8,8 +8,8 @@ from tqdm import tqdm
 from model import Actor, Critic
 from noise_generator import GaussianNoise
 from replay_buffer import OfflineBuffer
-import os
 
+import os
 
 class PretrainedTD3():
     def __init__(self, obs_space, action_space, args, device, load_path):
@@ -33,7 +33,7 @@ class PretrainedTD3():
             return OfflineBuffer(self.data_path)
             
 
-        print(f'Writing new data... (write_transition is set to true or the data_path does not exist )')
+        print(f'Writing new data... (either write_transition is set to true or the data_path does not exist )')
         seed = 0
         obs = env.reset(seed=seed)
         obs_records = []
