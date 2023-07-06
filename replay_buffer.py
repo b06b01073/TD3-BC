@@ -28,8 +28,9 @@ class OfflineBuffer:
         if batch_size > self.len:
             return None
         
+
         indices = np.random.randint(low=0, high=self.len, size=batch_size)
         transitions = (self.obs[indices], self.actions[indices], self.rewards[indices], self.next_obs[indices], self.terminated[indices])
 
-        return (torch.tensor(x, dtype=torch.float, device=device) for x in transitions)
+        return [torch.tensor(x, dtype=torch.float, device=device) for x in transitions]
 

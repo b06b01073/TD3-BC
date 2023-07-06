@@ -21,16 +21,17 @@ class PretrainedTD3():
         self.device = device
         self.eval_episodes = args.eval_episodes
 
+        self.action_low = action_space.low
+        self.action_high = action_space.high
+
         self.actor = Actor(self.obs_dim[0], self.action_dim[0]).to(device)
         self.actor.load_state_dict(torch.load(self.load_path))
 
-        self.write_transitions = args.write_transitions
-        self.data_path = os.path.join(args.transition_path, args.env_name)
 
-    def generate_dataset(self, env):
-        if not self.write_transitions and os.path.exists(self.data_path):
-            print(f'Reading existing data from {self.data_path}')
-            return OfflineBuffer(self.data_path)
+    def generate_dataset(self, env, data_path, exploration_prob=0, exploration_std=0, imperfect_demo=False):
+        # if not self.write_transitions and os.path.exists(self.data_path):
+        #     print(f'Reading existing data from {self.data_path}')
+        #     return OfflineBuffer(self.data_path)
             
 
         print(f'Writing new data... (either write_transition is set to true or the data_path does not exist )')
@@ -42,9 +43,17 @@ class PretrainedTD3():
         next_obs_records = []
         terminated_records = []
 
+        episode_returns = []
+        episode_return = 0
         for _ in tqdm(range(self.dataset_size), desc=f'Generating data from {self.load_path}'):
             action = self.select_action(obs)
+
+            if imperfect_demo and np.random.rand() < exploration_prob: # imperfect demo noise
+                action += np.random.normal(loc=0, scale=exploration_std)
+                action = np.clip(action, a_min=self.action_low, a_max=self.action_high)
+
             next_obs, reward, terminated, _ = env.step(action)
+            episode_return += reward
 
             obs_records.append(obs)
             action_records.append(action)
@@ -58,41 +67,26 @@ class PretrainedTD3():
                 seed += 1
                 obs = env.reset(seed=seed)
 
-        if not os.path.exists(self.data_path):
-            os.makedirs(self.data_path)
-        
-        np.save(os.path.join(self.data_path, 'obs'), np.array(obs_records))
-        np.save(os.path.join(self.data_path, 'action'), np.array(action_records))
-        np.save(os.path.join(self.data_path, 'next_obs'), np.array(next_obs_records))
-        np.save(os.path.join(self.data_path, 'reward'), np.array(reward_records))
-        np.save(os.path.join(self.data_path, 'terminated'), np.array(terminated_records))
+                # update returns
+                episode_returns.append(episode_return)
+                episode_return = 0
 
-        return OfflineBuffer(self.data_path)
+        avg_return = np.mean(episode_returns)
+        print(f'avg return {avg_return} (sampled from {len(episode_returns)} episodes)')
+
+        
+        np.save(os.path.join(data_path, 'obs'), np.array(obs_records))
+        np.save(os.path.join(data_path, 'action'), np.array(action_records))
+        np.save(os.path.join(data_path, 'next_obs'), np.array(next_obs_records))
+        np.save(os.path.join(data_path, 'reward'), np.array(reward_records))
+        np.save(os.path.join(data_path, 'terminated'), np.array(terminated_records))
+
+        return OfflineBuffer(data_path), avg_return
 
     def select_action(self, obs):
         obs = torch.from_numpy(obs).float().to(self.device)
         action = self.actor(obs).cpu().detach().numpy()
         return action
-
-    def evaluate(self):
-        env = gym.make(self.env_name)
-
-        avg_return = 0.
-        for _ in tqdm(range(self.eval_episodes), desc='evaluating pretrained model'):
-            obs = env.reset()
-            total_reward = 0
-            while True:
-                action = self.select_action(obs)
-                obs, reward, terminated, _ = env.step(action)
-                avg_return += reward
-                total_reward += reward
-
-                if terminated:
-                    break
-
-        avg_return /= self.eval_episodes
-
-        return avg_return
 
 
 class TD3Agent:
@@ -135,8 +129,6 @@ class TD3Agent:
         self.tau = args.tau
         self.env_name = args.env_name
         self.eval_episodes = args.eval_episodes
-        self.batch_cloning = args.batch_cloning
-        self.eps = args.eps
         self.alpha = args.alpha
 
 
@@ -173,7 +165,7 @@ class TD3Agent:
                 if terminated:
                     seed += 1
                     break
-            print(f'total reward of eval episode {i}: {total_reward}')
+            # print(f'total reward of eval episode {i}: {total_reward}')
 
         avg_return /= self.eval_episodes
         print(f'avg return: {avg_return} (steps {iters+1})')
@@ -181,7 +173,7 @@ class TD3Agent:
         return avg_return
 
 
-    def learn(self, transitions):
+    def learn(self, transitions, batch_cloning):
         obs, actions, rewards, next_obs, terminated = transitions
 
         # unsqueeze to prevent incorrect broadcasting for mujoco env
@@ -210,17 +202,14 @@ class TD3Agent:
         critic2_loss.backward()
         self.critic2_optim.step()
 
-        self.steps += 1
         # update actor and target network
+        self.steps += 1
         if self.steps % self.delay == 0:
 
-            if self.batch_cloning:
+            if batch_cloning:
                 q_coef = self.alpha / (torch.mean(torch.abs(self.critic1(obs, self.actor(obs)))))
                 q_coef = q_coef.detach()
-
                 bc_loss = (self.actor(obs) - actions) ** 2
-
-            if self.batch_cloning:
                 actor_loss = -(q_coef * self.critic1(obs, self.actor(obs)) - bc_loss).mean()
             else:
                 actor_loss = -self.critic1(obs, self.actor(obs)).mean() # negative sign for gradient ascend
@@ -240,7 +229,6 @@ class TD3Agent:
             for source_param, target_param in zip(self.actor.parameters(), self.target_actor.parameters()):
                 target_param.data.copy_(self.tau * source_param.data + (1 - self.tau) * target_param.data)
 
-        return critic1_loss.item(), critic2_loss.item()
 
 
         
