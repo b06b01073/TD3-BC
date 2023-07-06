@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torch.optim as optim
 import torch.nn as nn
-import gym
+import gymnasium as gym
 from tqdm import tqdm
 
 from model import Actor, Critic
@@ -32,11 +32,10 @@ class PretrainedTD3():
         # if not self.write_transitions and os.path.exists(self.data_path):
         #     print(f'Reading existing data from {self.data_path}')
         #     return OfflineBuffer(self.data_path)
-            
-
-        print(f'Writing new data... (either write_transition is set to true or the data_path does not exist )')
+        # print(f'Writing new data... (either write_transition is set to true or the data_path does not exist )')
+        
         seed = 0
-        obs = env.reset(seed=seed)
+        obs, _ = env.reset(seed=seed)
         obs_records = []
         action_records = []
         reward_records = []
@@ -52,20 +51,22 @@ class PretrainedTD3():
                 action += np.random.normal(loc=0, scale=exploration_std)
                 action = np.clip(action, a_min=self.action_low, a_max=self.action_high)
 
-            next_obs, reward, terminated, _ = env.step(action)
+            next_obs, reward, terminated, truncated, _ = env.step(action)
             episode_return += reward
+
+            done = terminated or truncated
 
             obs_records.append(obs)
             action_records.append(action)
             next_obs_records.append(next_obs)
             reward_records.append(reward)
-            terminated_records.append(int(terminated))
+            terminated_records.append(int(done))
             
             obs = next_obs
 
-            if terminated:
+            if done:
                 seed += 1
-                obs = env.reset(seed=seed)
+                obs, _ = env.reset(seed=seed)
 
                 # update returns
                 episode_returns.append(episode_return)
@@ -153,16 +154,16 @@ class TD3Agent:
         avg_return = 0.
         seed = 100
         for i in range(self.eval_episodes):
-            obs = env.reset(seed=seed)
+            obs, _ = env.reset(seed=seed)
             total_reward = 0
             while True:
                 obs = (obs - mean) / std
                 action = self.select_action(obs)
-                obs, reward, terminated, _ = env.step(action)
+                obs, reward, terminated, truncated, _ = env.step(action)
                 avg_return += reward
                 total_reward += reward
 
-                if terminated:
+                if terminated or truncated:
                     seed += 1
                     break
             # print(f'total reward of eval episode {i}: {total_reward}')

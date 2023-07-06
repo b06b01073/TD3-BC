@@ -1,5 +1,5 @@
 from argparse import ArgumentParser
-import gym
+import gymnasium as gym
 import torch
 
 from TD3_agent import PretrainedTD3, TD3Agent
@@ -24,13 +24,13 @@ if __name__ == '__main__':
     parser.add_argument('--eval_episodes', type=int, default=10)
     parser.add_argument('--eval_freq', type=int, default=200)
     parser.add_argument('--seed', type=int, default=0)
-    parser.add_argument('--dataset_size', type=int, default=1000000) # dataset size is suggested to be greater than max len of an episode
+    parser.add_argument('--dataset_size', type=int, default=1000000) # dataset size is suggested to be greater than max len of an episode and batch size, otherwise errors may occur
     parser.add_argument('--epoch', type=int, default=1000)
     parser.add_argument('--alpha', type=float, default=2.5)
     parser.add_argument('--eps', type=float, default=1e-3)
     parser.add_argument('--imperfect_demo', '-i', action='store_true')
-    parser.add_argument('--exploration_prob', '-e', type=float, default=0.3)
-    parser.add_argument('--exploration_std', '-e', type=float, default=0.3)
+    parser.add_argument('--exploration_prob', '-p', type=float, default=0.3)
+    parser.add_argument('--exploration_std', '-s', type=float, default=0.3)
     parser.add_argument('--trials', '-t', type=int, default=5)
       
     parser.add_argument('--load_dir', type=str, default='./pretrain_model')
