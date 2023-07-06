@@ -4,7 +4,10 @@
 This is an implementation of the research paper [A Minimalist Approach to Offline Reinforcement Learning](https://arxiv.org/abs/2106.06860), which focus on the offline RL setting.
 
 
-> TODO: 1. evaluate agents on D4RL 2. add pure BC in the result.
+## TODO
+1. Evaluate agent on D4RL
+1. Compare different alphas
+1. Compare TD3-BC with pure imitation learning or behavior cloning
 
 ## Result
 Two types of dataset were collected, which are
